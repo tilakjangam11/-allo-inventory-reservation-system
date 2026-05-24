@@ -1,0 +1,121 @@
+// prisma/schema.prisma
+// ═══════════════════════════════════════════════════════
+// This is the single source of truth for the database
+// structure. Every model maps 1:1 to a Postgres table.
+// ═══════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────────────────────────────────
+// Product — what customers buy (e.g. "Wireless Headphones Pro")
+// A product can exist in multiple warehouses via Inventory.
+// ───────────────────────────────────────────────────────
+model Product {
+  id          String      @id @default(cuid())   // cuid for collision-safe distributed IDs
+  name        String
+  sku         String      @unique                // SKU is the business identifier — must be unique
+  description String?                            // optional marketing copy
+  inventory   Inventory[]                        // one product can be stocked in many warehouses
+  createdAt   DateTime    @default(now())
+}
+
+// ───────────────────────────────────────────────────────
+// Warehouse — a physical location that holds stock
+// ───────────────────────────────────────────────────────
+model Warehouse {
+  id        String      @id @default(cuid())
+  name      String
+  location  String
+  inventory Inventory[]                          // one warehouse holds many product inventories
+  createdAt DateTime    @default(now())
+}
+
+// ───────────────────────────────────────────────────────
+// Inventory — the junction between Product and Warehouse.
+// This is where concurrency correctness lives.
+//
+// INVARIANT: reservedUnits <= totalUnits   ALWAYS.
+//
+// availableUnits is COMPUTED as (totalUnits - reservedUnits).
+// It is never stored as a column. Storing it would create
+// a second source of truth that can drift out of sync.
+//
+// The SELECT ... FOR UPDATE lock in reservation-service.ts
+// targets this row to prevent overselling.
+// ───────────────────────────────────────────────────────
+model Inventory {
+  id             String        @id @default(cuid())
+  productId      String
+  warehouseId    String
+  totalUnits     Int                              // physical stock count in this warehouse
+  reservedUnits  Int           @default(0)        // how many are held by pending/confirmed reservations
+  product        Product       @relation(fields: [productId], references: [id])
+  warehouse      Warehouse     @relation(fields: [warehouseId], references: [id])
+  reservations   Reservation[]
+
+  // A product can only have one inventory row per warehouse.
+  // Without this, two rows could track the same product in
+  // the same warehouse, making stock counts ambiguous.
+  @@unique([productId, warehouseId])
+}
+
+// ───────────────────────────────────────────────────────
+// Reservation — a time-limited hold on inventory units.
+//
+// Lifecycle:  PENDING → CONFIRMED  (units permanently claimed)
+//             PENDING → RELEASED   (units returned to pool)
+//
+// CONFIRMED does NOT decrement reservedUnits. The units stay
+// "reserved" because they're sold. Only RELEASED returns
+// units to the available pool.
+// ───────────────────────────────────────────────────────
+model Reservation {
+  id          String            @id @default(cuid())
+  inventoryId String
+  quantity    Int                                  // how many units this reservation holds
+  status      ReservationStatus @default(PENDING)  // starts as PENDING, transitions once
+  expiresAt   DateTime                             // server-set TTL — the countdown source of truth
+  inventory   Inventory         @relation(fields: [inventoryId], references: [id])
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt         // Prisma auto-updates on every write
+}
+
+// ───────────────────────────────────────────────────────
+// IdempotencyRecord — stores completed API responses for
+// retry-safe reserve and confirm requests.
+//
+// A request creates this row before doing side effects. Any
+// concurrent retry with the same key/scope waits for this row
+// to be completed, then returns the stored response.
+// ───────────────────────────────────────────────────────
+model IdempotencyRecord {
+  id           String    @id @default(cuid())
+  key          String
+  scope        String
+  requestHash  String
+  statusCode   Int?
+  responseBody Json?
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([key, scope])
+}
+
+// ───────────────────────────────────────────────────────
+// ReservationStatus — the three terminal states.
+// PENDING is the only mutable state. CONFIRMED and RELEASED
+// are final — no transitions out of them.
+// ───────────────────────────────────────────────────────
+enum ReservationStatus {
+  PENDING     // hold is active, countdown running
+  CONFIRMED   // purchase completed, units permanently claimed
+  RELEASED    // hold cancelled or expired, units returned
+}
