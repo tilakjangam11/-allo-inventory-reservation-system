@@ -1,0 +1,12 @@
+# Exclude files from Vercel deployments
+# https://vercel.com/docs/deployments/vercel-ignore
+
+# Test utilities
+test-*.ts
+test-*.sh
+
+# Design documentation (not needed at runtime)
+DECISION_LOG.md
+
+# Config files not needed for deployment
+.env.example

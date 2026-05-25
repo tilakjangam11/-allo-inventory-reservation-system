@@ -3,17 +3,24 @@
 import { use, useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 
+// ── Types ─────────────────────────────────────────────
+type ReservationStatus = 'PENDING' | 'CONFIRMED' | 'RELEASED'
+
 type Reservation = {
   id: string
-  status: 'PENDING' | 'CONFIRMED' | 'RELEASED'
+  status: ReservationStatus
   quantity: number
   expiresAt: string
+  confirmedAt: string | null
+  releasedAt: string | null
+  releaseReason: string | null
   inventory?: {
     product?: { name: string; sku: string; description?: string | null }
     warehouse?: { name: string; location: string }
   }
 }
 
+// ── Countdown Timer ───────────────────────────────────
 function Countdown({
   expiresAt,
   onExpired,
@@ -49,28 +56,123 @@ function Countdown({
   const mins = Math.floor(seconds / 60)
   const secs = seconds % 60
   const urgent = seconds <= 60
+  const critical = seconds <= 30
+  const totalDuration = 600 // 10 minutes
+  const progressPct = Math.max(3, (seconds / totalDuration) * 100)
 
   return (
-    <div className={`rounded-lg border p-5 ${urgent ? 'border-rose-200 bg-rose-50' : 'border-cyan-200 bg-cyan-50'}`}>
-      <div className="text-sm font-semibold text-slate-600">Hold expires in</div>
-      <div className={`mt-2 font-mono text-5xl font-semibold ${urgent ? 'text-rose-700' : 'text-slate-950'}`}>
-        {String(mins).padStart(2, '0')}:{String(secs).padStart(2, '0')}
+    <div
+      className="rounded-2xl p-6"
+      style={{
+        background: urgent
+          ? 'var(--danger-light)'
+          : 'var(--primary-light)',
+        border: `1px solid ${urgent ? 'rgba(225, 29, 72, 0.15)' : 'rgba(15, 118, 110, 0.12)'}`,
+        transition: 'background 0.5s ease, border-color 0.5s ease',
+      }}
+    >
+      <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
+        Hold expires in
       </div>
-      <div className="mt-4 h-2 overflow-hidden rounded-md bg-white">
+      <div
+        className={`countdown-display mt-3 text-5xl ${critical ? 'animate-pulse-soft' : ''}`}
+        style={{
+          color: urgent ? 'var(--danger)' : 'var(--text-primary)',
+          transition: 'color 0.5s ease',
+        }}
+      >
+        {String(mins).padStart(2, '0')}
+        <span style={{ opacity: 0.4 }}>:</span>
+        {String(secs).padStart(2, '0')}
+      </div>
+      <div className="progress-track mt-4" style={{ height: '4px' }}>
         <div
-          className={`h-full rounded-md ${urgent ? 'bg-rose-500' : 'bg-cyan-600'}`}
-          style={{ width: `${Math.max(3, (seconds / 600) * 100)}%` }}
+          className="progress-fill"
+          style={{
+            width: `${progressPct}%`,
+            background: urgent ? 'var(--danger)' : 'var(--primary)',
+            transition: 'width 1s linear, background 0.5s ease',
+          }}
         />
       </div>
+      {urgent && (
+        <div className="mt-3 text-xs font-medium" style={{ color: 'var(--danger)', opacity: 0.8 }}>
+          {critical ? 'Expiring soon — confirm now to secure your units' : 'Less than 1 minute remaining'}
+        </div>
+      )}
     </div>
   )
 }
 
+// ── Lifecycle Timeline ────────────────────────────────
+function LifecycleTimeline({ status, releaseReason }: { status: ReservationStatus; releaseReason: string | null }) {
+  const isExpired = status === 'RELEASED' && releaseReason === 'expired'
+
+  const steps = [
+    { label: 'Created', active: true },
+    { label: 'Pending', active: status === 'PENDING' || status === 'CONFIRMED' || status === 'RELEASED' },
+    {
+      label: status === 'CONFIRMED' ? 'Confirmed' : isExpired ? 'Expired' : status === 'RELEASED' ? 'Released' : 'Awaiting',
+      active: status === 'CONFIRMED' || status === 'RELEASED',
+    },
+  ]
+
+  function dotStyle(step: typeof steps[0], idx: number): string {
+    if (!step.active) return 'timeline-inactive'
+    if (idx === 2) {
+      if (status === 'CONFIRMED') return 'timeline-success'
+      if (isExpired) return 'timeline-danger'
+      return 'timeline-neutral'
+    }
+    return 'timeline-active'
+  }
+
+  return (
+    <div className="flex items-center gap-0" style={{ padding: '0 4px' }}>
+      {steps.map((step, idx) => (
+        <div key={step.label} className="flex items-center" style={{ flex: idx < steps.length - 1 ? 1 : undefined }}>
+          <div className="flex flex-col items-center gap-1.5">
+            <div className={`timeline-dot ${dotStyle(step, idx)}`} />
+            <span className="text-[10px] font-medium" style={{ color: step.active ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+              {step.label}
+            </span>
+          </div>
+          {idx < steps.length - 1 && (
+            <div
+              className={`timeline-line ${step.active && steps[idx + 1].active ? dotStyle(steps[idx + 1], idx + 1) : 'timeline-inactive'}`}
+              style={{ margin: '0 4px', marginBottom: '18px' }}
+            />
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Status Pill ───────────────────────────────────────
+function StatusPill({ status, releaseReason }: { status: ReservationStatus; releaseReason: string | null }) {
+  const isExpired = status === 'RELEASED' && releaseReason === 'expired'
+
+  if (isExpired) {
+    return <span className="status-pill status-expired">Expired</span>
+  }
+
+  const styleMap: Record<ReservationStatus, string> = {
+    PENDING: 'status-pending',
+    CONFIRMED: 'status-confirmed',
+    RELEASED: 'status-released',
+  }
+
+  return <span className={`status-pill ${styleMap[status]}`}>{status}</span>
+}
+
+// ── Main Page ─────────────────────────────────────────
 export default function ReservationPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const [reservation, setReservation] = useState<Reservation | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ message: string; type: 'expired' | 'error' } | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const confirmKey = useRef<string | null>(null)
 
@@ -85,13 +187,13 @@ export default function ReservationPage({ params }: { params: Promise<{ id: stri
   }, [id])
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchReservation()
   }, [fetchReservation])
 
   async function handleConfirm() {
     setActionLoading(true)
     setError(null)
+    setSuccess(null)
     confirmKey.current ??= crypto.randomUUID()
 
     try {
@@ -101,18 +203,25 @@ export default function ReservationPage({ params }: { params: Promise<{ id: stri
       })
 
       if (res.status === 410) {
-        setError('Reservation expired before payment confirmation. The unit has been released.')
+        setError({
+          message: 'This reservation expired before payment confirmation. The held units have been automatically returned to available stock.',
+          type: 'expired',
+        })
         await fetchReservation()
         return
       }
 
       if (!res.ok) {
         const payload = await res.json().catch(() => null)
-        setError(payload?.error ?? 'Could not confirm the purchase. Please try again.')
+        setError({
+          message: payload?.error ?? 'Could not confirm the purchase. Please try again.',
+          type: 'error',
+        })
         return
       }
 
       confirmKey.current = null
+      setSuccess('Purchase confirmed successfully. Units have been permanently deducted from inventory.')
       await fetchReservation()
     } finally {
       setActionLoading(false)
@@ -122,116 +231,252 @@ export default function ReservationPage({ params }: { params: Promise<{ id: stri
   async function handleCancel() {
     setActionLoading(true)
     setError(null)
+    setSuccess(null)
 
     try {
-      const res = await fetch(`/api/reservations/${id}/release`, { method: 'POST' })
+      const res = await fetch(`/api/reservations/${id}/release`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'manual_cancel' }),
+      })
 
       if (!res.ok) {
         const payload = await res.json().catch(() => null)
-        setError(payload?.error ?? 'Could not cancel this reservation.')
+        setError({
+          message: payload?.error ?? 'Could not cancel this reservation.',
+          type: 'error',
+        })
         return
       }
 
+      setSuccess('Reservation cancelled. The held units have been returned to available stock.')
       await fetchReservation()
     } finally {
       setActionLoading(false)
     }
   }
 
+  // ── Loading State ─────────────────────────────────
   if (loading) {
     return (
-      <div className="mx-auto max-w-2xl space-y-4">
-        <div className="h-10 w-40 animate-pulse rounded-md bg-slate-200" />
-        <div className="h-96 animate-pulse rounded-lg border border-slate-200 bg-white" />
+      <div className="mx-auto max-w-3xl space-y-4 animate-fade-in">
+        <div className="skeleton" style={{ height: '40px', width: '160px' }} />
+        <div className="skeleton" style={{ height: '400px' }} />
       </div>
     )
   }
 
+  // ── Not Found ─────────────────────────────────────
   if (!reservation) {
     return (
-      <div className="mx-auto max-w-xl rounded-lg border border-slate-200 bg-white p-8 text-center shadow-sm">
-        <h1 className="text-2xl font-semibold text-slate-950">Reservation not found</h1>
-        <p className="mt-2 text-sm text-slate-600">The hold may have been removed or the URL is incorrect.</p>
-        <Link href="/" className="mt-6 inline-flex h-11 items-center rounded-md bg-slate-950 px-5 text-sm font-semibold text-white">
-          Browse products
-        </Link>
+      <div className="mx-auto max-w-xl animate-scale-in">
+        <div className="card p-10 text-center">
+          <div className="text-4xl mb-4">🔍</div>
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            Reservation not found
+          </h1>
+          <p className="mt-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+            The hold may have been removed or the URL is incorrect.
+          </p>
+          <Link href="/" className="btn btn-primary mt-6 inline-flex">
+            Browse products
+          </Link>
+        </div>
       </div>
     )
   }
 
   const isPending = reservation.status === 'PENDING'
   const isConfirmed = reservation.status === 'CONFIRMED'
+  const isReleased = reservation.status === 'RELEASED'
+  const isExpired = isReleased && reservation.releaseReason === 'expired'
   const product = reservation.inventory?.product
   const warehouse = reservation.inventory?.warehouse
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
-      <Link href="/" className="inline-flex text-sm font-semibold text-slate-600 hover:text-slate-950">
+    <div className="mx-auto max-w-3xl space-y-5 animate-fade-in">
+      {/* Back link */}
+      <Link
+        href="/"
+        className="inline-flex items-center gap-1.5 text-sm font-semibold transition"
+        style={{ color: 'var(--text-secondary)' }}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M10 12L6 8L10 4" />
+        </svg>
         Back to products
       </Link>
 
-      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <div className="grid gap-5 border-b border-slate-200 bg-slate-950 px-6 py-6 text-white md:grid-cols-[1fr_auto] md:items-start">
+      <section className="card overflow-hidden">
+        {/* ── Dark Hero Header ─────────────────────────── */}
+        <div
+          className="grid gap-5 px-6 py-7 md:grid-cols-[1fr_auto] md:items-start"
+          style={{
+            background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
+            borderBottom: '1px solid rgba(255,255,255,0.06)',
+          }}
+        >
           <div>
-            <div className="text-sm font-medium text-cyan-200">Reservation</div>
-            <h1 className="mt-2 text-3xl font-semibold">{product?.name ?? 'Product hold'}</h1>
-            <div className="mt-2 font-mono text-sm text-slate-300">{reservation.id}</div>
+            <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--accent-glow)' }}>
+              Reservation
+            </div>
+            <h1 className="mt-2 text-3xl font-bold text-white" style={{ letterSpacing: '-0.02em' }}>
+              {product?.name ?? 'Product hold'}
+            </h1>
+            <div className="mt-2 font-mono text-sm" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              {reservation.id}
+            </div>
           </div>
-          <span className={`inline-flex h-9 items-center rounded-md px-3 text-sm font-semibold ${
-            isPending
-              ? 'bg-amber-300 text-amber-950'
-              : isConfirmed
-                ? 'bg-emerald-300 text-emerald-950'
-                : 'bg-slate-200 text-slate-800'
-          }`}>
-            {reservation.status}
-          </span>
+          <StatusPill status={reservation.status} releaseReason={reservation.releaseReason} />
         </div>
 
-        <div className="grid gap-6 p-6 md:grid-cols-[1fr_240px]">
-          <div className="space-y-4">
+        {/* ── Body ─────────────────────────────────────── */}
+        <div className="grid gap-6 p-6 md:grid-cols-[1fr_260px]">
+          <div className="space-y-5">
+            {/* Details grid */}
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold text-slate-500">SKU</div>
-                <div className="mt-2 font-mono text-lg text-slate-950">{product?.sku ?? 'Unknown'}</div>
+              <div className="card-inner p-4">
+                <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
+                  SKU
+                </div>
+                <div className="mt-2 font-mono text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {product?.sku ?? 'Unknown'}
+                </div>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold text-slate-500">Quantity</div>
-                <div className="mt-2 text-lg font-semibold text-slate-950">{reservation.quantity} unit</div>
+              <div className="card-inner p-4">
+                <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
+                  Quantity
+                </div>
+                <div className="mt-2 text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {reservation.quantity} {reservation.quantity === 1 ? 'unit' : 'units'}
+                </div>
               </div>
             </div>
 
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="text-xs font-semibold text-slate-500">Fulfilment location</div>
-              <div className="mt-2 font-semibold text-slate-950">{warehouse?.name ?? 'Warehouse'}</div>
-              <div className="mt-1 text-sm text-slate-600">{warehouse?.location}</div>
+            {/* Fulfilment location */}
+            <div className="card-inner p-4">
+              <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
+                Fulfilment location
+              </div>
+              <div className="mt-2 font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {warehouse?.name ?? 'Warehouse'}
+              </div>
+              <div className="mt-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                {warehouse?.location}
+              </div>
             </div>
 
+            {/* Lifecycle timeline */}
+            <div className="card-inner p-4">
+              <div className="text-[10px] font-bold uppercase tracking-wider mb-4" style={{ color: 'var(--text-tertiary)' }}>
+                Lifecycle
+              </div>
+              <LifecycleTimeline status={reservation.status} releaseReason={reservation.releaseReason} />
+            </div>
+
+            {/* ── Error Banner (410 / generic) ─────────── */}
             {error && (
-              <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">
-                {error}
+              <div
+                className={`alert animate-scale-in ${error.type === 'expired' ? 'alert-error' : 'alert-error'}`}
+                role="alert"
+              >
+                <svg className="alert-icon" viewBox="0 0 20 20" fill="currentColor">
+                  {error.type === 'expired' ? (
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clipRule="evenodd" />
+                  ) : (
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM8.94 6.94a.75.75 0 11-1.061-1.06.75.75 0 011.06 1.06zm2.12 0a.75.75 0 10 1.06-1.06.75.75 0 00-1.06 1.06zM10 15a.75.75 0 01-.75-.75v-3.5a.75.75 0 011.5 0v3.5A.75.75 0 0110 15z" clipRule="evenodd" />
+                  )}
+                </svg>
+                <div className="flex-1">
+                  <div className="font-semibold" style={{ fontSize: '0.8125rem' }}>
+                    {error.type === 'expired' ? 'Reservation expired (410 Gone)' : 'Error'}
+                  </div>
+                  <div style={{ marginTop: '2px', opacity: 0.9 }}>
+                    {error.message}
+                  </div>
+                  {error.type === 'expired' && (
+                    <Link
+                      href="/"
+                      className="inline-flex items-center gap-1 mt-3 text-xs font-semibold underline underline-offset-2"
+                    >
+                      Browse products and try again →
+                    </Link>
+                  )}
+                </div>
               </div>
             )}
 
-            {isConfirmed && (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5">
-                <h2 className="text-lg font-semibold text-emerald-950">Purchase confirmed</h2>
-                <p className="mt-2 text-sm leading-6 text-emerald-800">
-                  The reservation is now final and the units remain removed from available inventory.
-                </p>
+            {/* ── Success Banner ───────────────────────── */}
+            {success && (
+              <div className="alert alert-success animate-scale-in" role="status">
+                <svg className="alert-icon" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
+                </svg>
+                <div className="flex-1">
+                  <div className="font-semibold" style={{ fontSize: '0.8125rem' }}>
+                    {isConfirmed ? 'Purchase confirmed' : 'Reservation released'}
+                  </div>
+                  <div style={{ marginTop: '2px', opacity: 0.9 }}>
+                    {success}
+                  </div>
+                </div>
               </div>
             )}
 
-            {reservation.status === 'RELEASED' && (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-5">
-                <h2 className="text-lg font-semibold text-slate-950">Reservation released</h2>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  The held unit has returned to available stock for other shoppers.
-                </p>
+            {/* ── Confirmed state ──────────────────────── */}
+            {isConfirmed && !success && (
+              <div className="alert alert-success animate-fade-in">
+                <svg className="alert-icon" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
+                </svg>
+                <div>
+                  <div className="font-semibold" style={{ fontSize: '0.8125rem' }}>Purchase confirmed</div>
+                  <div style={{ marginTop: '2px', opacity: 0.9 }}>
+                    The reservation is now final. Units have been permanently removed from available inventory.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Released state ───────────────────────── */}
+            {isReleased && !isExpired && !success && (
+              <div className="alert alert-neutral animate-fade-in">
+                <svg className="alert-icon" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM6.75 9.25a.75.75 0 000 1.5h6.5a.75.75 0 000-1.5h-6.5z" clipRule="evenodd" />
+                </svg>
+                <div>
+                  <div className="font-semibold" style={{ fontSize: '0.8125rem' }}>Reservation released</div>
+                  <div style={{ marginTop: '2px', opacity: 0.9 }}>
+                    The held units have been returned to available stock for other shoppers.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Expired state ────────────────────────── */}
+            {isExpired && !error && (
+              <div className="alert alert-error animate-fade-in">
+                <svg className="alert-icon" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clipRule="evenodd" />
+                </svg>
+                <div>
+                  <div className="font-semibold" style={{ fontSize: '0.8125rem' }}>Reservation expired</div>
+                  <div style={{ marginTop: '2px', opacity: 0.9 }}>
+                    This hold expired before confirmation. The units have been returned to available stock.
+                  </div>
+                  <Link
+                    href="/"
+                    className="inline-flex items-center gap-1 mt-3 text-xs font-semibold underline underline-offset-2"
+                    style={{ color: 'inherit' }}
+                  >
+                    Browse products and reserve again →
+                  </Link>
+                </div>
               </div>
             )}
           </div>
 
+          {/* ── Sidebar Actions ────────────────────────── */}
           <aside className="space-y-4">
             {isPending && (
               <>
@@ -240,25 +485,40 @@ export default function ReservationPage({ params }: { params: Promise<{ id: stri
                   <button
                     onClick={handleConfirm}
                     disabled={actionLoading}
-                    className="h-12 rounded-md bg-cyan-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+                    className="btn btn-primary btn-lg btn-block"
+                    id="confirm-purchase"
                   >
-                    {actionLoading ? 'Processing...' : 'Confirm purchase'}
+                    {actionLoading ? (
+                      <>
+                        <span className="spinner" />
+                        Processing
+                      </>
+                    ) : (
+                      'Confirm purchase'
+                    )}
                   </button>
                   <button
                     onClick={handleCancel}
                     disabled={actionLoading}
-                    className="h-12 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="btn btn-secondary btn-lg btn-block"
+                    id="cancel-reservation"
                   >
                     Cancel
                   </button>
                 </div>
+                <p className="text-[11px] text-center" style={{ color: 'var(--text-tertiary)' }}>
+                  Units are held until the timer expires.
+                  <br />
+                  Confirm to complete the purchase.
+                </p>
               </>
             )}
 
             {!isPending && (
               <Link
                 href="/"
-                className="inline-flex h-12 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-cyan-700"
+                className="btn btn-primary btn-lg btn-block"
+                id="return-to-inventory"
               >
                 Return to inventory
               </Link>

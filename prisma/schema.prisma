@@ -24,6 +24,7 @@ model Product {
   description String?                            // optional marketing copy
   inventory   Inventory[]                        // one product can be stocked in many warehouses
   createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 }
 
 // ───────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ model Warehouse {
   location  String
   inventory Inventory[]                          // one warehouse holds many product inventories
   createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
 }
 
 // ───────────────────────────────────────────────────────
@@ -77,14 +79,17 @@ model Inventory {
 // units to the available pool.
 // ───────────────────────────────────────────────────────
 model Reservation {
-  id          String            @id @default(cuid())
-  inventoryId String
-  quantity    Int                                  // how many units this reservation holds
-  status      ReservationStatus @default(PENDING)  // starts as PENDING, transitions once
-  expiresAt   DateTime                             // server-set TTL — the countdown source of truth
-  inventory   Inventory         @relation(fields: [inventoryId], references: [id])
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt         // Prisma auto-updates on every write
+  id            String            @id @default(cuid())
+  inventoryId   String
+  quantity      Int                                  // how many units this reservation holds
+  status        ReservationStatus @default(PENDING)  // starts as PENDING, transitions once
+  expiresAt     DateTime                             // server-set TTL — the countdown source of truth
+  confirmedAt   DateTime?                            // set when status transitions to CONFIRMED
+  releasedAt    DateTime?                            // set when status transitions to RELEASED
+  releaseReason String?                              // why the hold was released (manual_cancel, expired)
+  inventory     Inventory         @relation(fields: [inventoryId], references: [id])
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt         // Prisma auto-updates on every write
 }
 
 // ───────────────────────────────────────────────────────

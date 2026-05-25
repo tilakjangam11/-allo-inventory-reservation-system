@@ -6,9 +6,11 @@
 // Decrements reservedUnits on the inventory row,
 // returning the held units to the available pool.
 //
+// Accepts optional { reason } in the body for audit.
+//
 // Returns:
 //   200 — reservation released, stock returned
-//   400 — reservation is not PENDING
+//   400 — reservation is not PENDING (already confirmed)
 //   404 — reservation not found
 // ═══════════════════════════════════════════════════════
 
@@ -16,13 +18,24 @@ import { NextResponse } from 'next/server'
 import { releaseReservation } from '@/lib/reservation-service'
 
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
 
+  // Accept optional reason from client
+  let reason = 'manual_cancel'
   try {
-    const reservation = await releaseReservation(id)
+    const body = await req.json()
+    if (body?.reason && typeof body.reason === 'string') {
+      reason = body.reason
+    }
+  } catch {
+    // No body or invalid JSON — use default reason
+  }
+
+  try {
+    const reservation = await releaseReservation(id, reason)
     return NextResponse.json(reservation)
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'Unknown error'
@@ -34,8 +47,6 @@ export async function POST(
       )
     }
     if (message === 'NOT_PENDING') {
-      // Attempting to release a CONFIRMED or already-RELEASED
-      // reservation. Return 400 to signal the client.
       return NextResponse.json(
         { error: 'Reservation is not in PENDING status' },
         { status: 400 }
